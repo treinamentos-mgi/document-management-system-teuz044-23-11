@@ -3,6 +3,15 @@ const fs = require('node:fs');
 const multer = require('multer');
 const config = require('../config');
 const documentsService = require('../services/documents.service');
+const { DocumentError } = require('../services/document.error');
+
+const DOCUMENT_ERROR_STATUS = {
+  MISSING_USER_ID: 400,
+  MISSING_FILE: 400,
+  UNSUPPORTED_MEDIA_TYPE: 415,
+  DOCUMENT_NOT_FOUND: 404,
+  STORAGE_ERROR: 500,
+};
 
 const MULTER_ERROR_RESPONSES = {
   LIMIT_FILE_SIZE: {
@@ -29,9 +38,7 @@ const upload = multer({
   limits: { fileSize: config.maxUploadSizeBytes, files: 1 },
   fileFilter: (req, file, cb) => {
     if (!documentsService.isMimeTypeAllowed(file.mimetype)) {
-      return cb(
-        documentsService.createError(415, 'UNSUPPORTED_MEDIA_TYPE', 'Tipo de arquivo não permitido.'),
-      );
+      return cb(new DocumentError('UNSUPPORTED_MEDIA_TYPE', 'Tipo de arquivo não permitido.'));
     }
     cb(null, true);
   },
@@ -41,7 +48,7 @@ function requireUserId(req, res, next) {
   const owner = req.get('X-User-Id')?.trim();
 
   if (!owner) {
-    return next(documentsService.createError(400, 'MISSING_USER_ID', 'O cabeçalho X-User-Id é obrigatório.'));
+    return next(new DocumentError('MISSING_USER_ID', 'O cabeçalho X-User-Id é obrigatório.'));
   }
 
   req.owner = owner;
@@ -66,14 +73,30 @@ async function downloadDocument(req, res) {
   await res.sendFile(file.filePath);
 }
 
+function toErrorResponse(error) {
+  if (error instanceof multer.MulterError) {
+    return MULTER_ERROR_RESPONSES[error.code];
+  }
+
+  if (error instanceof DocumentError && DOCUMENT_ERROR_STATUS[error.errorCode]) {
+    return {
+      status: DOCUMENT_ERROR_STATUS[error.errorCode],
+      errorCode: error.errorCode,
+      message: error.message,
+    };
+  }
+
+  return undefined;
+}
+
 function handleError(error, req, res, next) {
   if (res.headersSent) {
     return next(error);
   }
 
-  const response = error instanceof multer.MulterError ? MULTER_ERROR_RESPONSES[error.code] : error;
+  const response = toErrorResponse(error);
 
-  if (!response?.errorCode) {
+  if (!response) {
     console.error(error);
     return res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'Erro interno do servidor.' } });
   }
