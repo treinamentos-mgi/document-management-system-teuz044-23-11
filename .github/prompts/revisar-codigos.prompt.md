@@ -1,0 +1,1 @@
+Revise os códigos realizados na ultima alteração como um QA Senior.
